@@ -3,6 +3,7 @@ LLM Service - Unified interface for multiple LLM providers
 Supports: OpenAI, Anthropic, Zhipu AI
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, List, Optional
 
@@ -98,9 +99,11 @@ class ZhipuService(BaseLLMService):
             stream=True,
         )
 
+        # 智谱AI返回同步迭代器，需要在异步生成器中包装
         for chunk in response:
-            if chunk.choices[0].delta.content:
+            if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+            await asyncio.sleep(0)  # 让出控制权
 
 
 class OpenAIService(BaseLLMService):

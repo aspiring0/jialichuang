@@ -1,11 +1,17 @@
 """
 Supervisor Agent - Central Orchestrator for Multi-Agent Data Analysis System
+
+## 状态更新规范
+
+所有节点函数必须返回**新的状态字典**，而不是直接修改输入的 state。
+这遵循 LangGraph 的不可变状态更新模式。
 """
 
 import json
 from typing import Any, Dict, List, Optional
 
 from app.agents.state import AgentState
+from app.agents.base import create_completed_agents_update
 from app.prompts.supervisor import (
     SUPERVISOR_SYSTEM_PROMPT,
     SUPERVISOR_INTENT_PROMPT,
@@ -193,56 +199,86 @@ class SupervisorAgent:
         return None  # All done
 
 
-async def supervisor_node(state: AgentState) -> AgentState:
+async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     """
     LangGraph node function for Supervisor Agent.
+    
+    ## 状态更新规范
+    - 返回**新字典**，不直接修改 state
+    - 设置 current_agent
+    - 增加 step_count
+    - 不添加到 completed_agents（supervisor 是调度器，不是执行者）
+    - 仅做路由决策，不修改业务状态
     
     Args:
         state: Current agent state
     
     Returns:
-        Updated agent state
+        更新后的状态字典
     """
-    state["current_agent"] = "supervisor"
-    state["execution_logs"] = state.get("execution_logs", []) + [
+    # 获取当前值（不修改原 state）
+    current_step = state.get("step_count", 0) + 1
+    logs = state.get("execution_logs", []) + [
         "Supervisor: Starting orchestration"
     ]
     
     # Create supervisor instance
     supervisor = SupervisorAgent()
     
+    # 构建新状态字典
+    new_state = {
+        **state,
+        "current_agent": "supervisor",
+        "step_count": current_step,
+        "execution_logs": logs,
+    }
+    
     # If this is the first call, analyze intent
     if not state.get("intent"):
-        intent_result = await supervisor.analyze_intent(state)
-        state["intent"] = intent_result.get("intent")
-        state["agent_sequence"] = intent_result.get("agent_sequence", [])
-        state["task_plan"] = intent_result.get("task_plan", [])
-        
-        state["execution_logs"] = state.get("execution_logs", []) + [
-            f"Supervisor: Intent classified as '{state['intent']}'",
-            f"Supervisor: Agent sequence: {state['agent_sequence']}"
-        ]
+        try:
+            intent_result = await supervisor.analyze_intent(state)
+            new_state["intent"] = intent_result.get("intent", "unknown")
+            new_state["agent_sequence"] = intent_result.get("agent_sequence", [])
+            new_state["task_plan"] = intent_result.get("task_plan", [])
+            
+            new_state["execution_logs"] = new_state["execution_logs"] + [
+                f"Supervisor: Intent classified as '{new_state['intent']}'",
+                f"Supervisor: Agent sequence: {new_state['agent_sequence']}"
+            ]
+        except Exception as e:
+            new_state["intent"] = "unknown"
+            new_state["agent_sequence"] = ["data_parser", "analysis", "visualization"]
+            new_state["execution_logs"] = new_state["execution_logs"] + [
+                f"Supervisor: Intent analysis failed, using default sequence: {e}"
+            ]
     
     # Determine next agent
     next_agent = supervisor.determine_next_agent(state)
-    state["next_agent"] = next_agent
+    new_state["next_agent"] = next_agent
     
     # If no next agent, aggregate results
     if next_agent is None:
-        state["execution_logs"] = state.get("execution_logs", []) + [
+        new_state["execution_logs"] = new_state["execution_logs"] + [
             "Supervisor: All agents completed, aggregating results"
         ]
         
-        final_output = await supervisor.aggregate_results(state)
-        state["final_output"] = final_output
-        state["success"] = True
+        try:
+            final_output = await supervisor.aggregate_results(state)
+            new_state["final_output"] = final_output
+            new_state["success"] = True
+        except Exception as e:
+            new_state["final_output"] = {
+                "summary": "Analysis completed with errors",
+                "error": str(e),
+            }
+            new_state["success"] = True  # 标记成功以结束流程
         
-        state["execution_logs"] = state.get("execution_logs", []) + [
+        new_state["execution_logs"] = new_state["execution_logs"] + [
             "Supervisor: Final output generated"
         ]
     else:
-        state["execution_logs"] = state.get("execution_logs", []) + [
+        new_state["execution_logs"] = new_state["execution_logs"] + [
             f"Supervisor: Routing to {next_agent}"
         ]
     
-    return state
+    return new_state

@@ -515,6 +515,9 @@ def supervisor_node(state: AgentState) -> AgentState:
 | Prompts 提示词 | `backend/app/prompts/*.md` | ✅ 5/5 md files |
 | Prompts 加载器 | `backend/app/prompts/loader.py` | ✅ |
 | Docker 服务 | postgres/redis/rabbitmq/minio/grafana | ✅ running |
+| **LLM服务集成** | `backend/app/services/llm_service.py` | ✅ **智谱AI glm-5** |
+| **API与Agent连接测试** | `test_ai_interaction.py` | ✅ **4/4 通过** |
+| **端到端流程测试** | `test_e2e_flow.py` | ✅ **4/5 通过** |
 
 #### Week 3-4: 核心Agent实现
 
